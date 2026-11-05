@@ -17,7 +17,7 @@ Bundled **portable AutoHotkey v2.0.31** (`AutoHotkey64.exe` next to `NUMB.ahk`).
    .\Build-Installer.ps1
    ```
 
-4. Ship **`Output\NUMB-Setup-1.4.6.exe`**. Users run it **without** elevating.
+4. Ship **`Output\NUMB-Setup-1.4.7.exe`**. Users run it **without** elevating.
 
 Optional wizard tasks: logon startup, launch when finished.
 

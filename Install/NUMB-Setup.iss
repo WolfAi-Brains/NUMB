@@ -1,9 +1,9 @@
 ; Compile with Inno Setup 6: iscc NUMB-Setup.iss
-; Output: Install\Output\NUMB-Setup-1.4.6.exe
+; Output: Install\Output\NUMB-Setup-1.4.7.exe
 ; Per-user install — no administrator required.
 
 #define MyAppName "NUMB"
-#define MyAppVersion "1.4.6"
+#define MyAppVersion "1.4.7"
 #define MyAppPublisher "WolfAi"
 #define MyAppURL "mailto:yankolobo@gmail.com"
 

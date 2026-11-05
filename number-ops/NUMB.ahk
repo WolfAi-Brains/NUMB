@@ -10,12 +10,15 @@ CoordMode "Mouse", "Screen"
 ; Install path (Windows): C:\WolfAi\NUMB\number-ops\NUMB.ahk
 ; =============================================================================
 
-APP_VERSION := "1.4.6"
+APP_VERSION := "1.4.7"
 
 ; --- Tunables (raise delays if Ix is slow to focus/select) -------------------
 ClickDelayMs := 40
 CopyDelayMs := 80
 WriteDelayMs := 40
+SelectionClipWaitSec := 0.12   ; first try — empty numeric fields must not sit here long
+SelectionClipRetrySec := 0.38  ; after activate, for slow MText / case highlight
+FieldClipWaitSec := 0.28       ; Ctrl+A / Ctrl+C on a numeric cell
 ; AutoCAD / native Properties palette: refocus cell and Enter to commit
 CommitEnterAfterWrite := true
 CommitEnterAfterCaseWrite := false
@@ -105,13 +108,11 @@ StartNumberOp() {
     targetWin := WinExist("A")
 
     ; Copy highlight before WinActivate — activating can drop the selection in MText.
-    raw := TryCopySelection()
-    if (raw = "")
-        raw := TryCopySelection()
-    if (raw = "" && targetWin) {
+    raw := TryCopySelection(SelectionClipWaitSec)
+    if (Trim(raw) = "" && targetWin) {
         try WinActivate("ahk_id " targetWin)
-        Sleep(CopyDelayMs)
-        raw := TryCopySelection()
+        Sleep(CopyDelayMs // 3)
+        raw := TryCopySelection(SelectionClipRetrySec)
     }
 
     if (Trim(raw) != "") {
@@ -128,10 +129,10 @@ StartNumberOp() {
     caseSelectionNeedle := ""
     if targetWin {
         try WinActivate("ahk_id " targetWin)
-        Sleep(CopyDelayMs // 2)
+        Sleep(CopyDelayMs // 3)
     }
     Click("Left")
-    Sleep(ClickDelayMs)
+    Sleep(ClickDelayMs // 2)
     targetWin := WinExist("A")
 
     raw := TryCopyFieldAll()
@@ -313,13 +314,11 @@ TryCopyFieldAllInPlace() {
     return SanitizeGrabbedText(full)
 }
 
-TryCopySelection() {
-    global CopyDelayMs
+TryCopySelection(clipWaitSec := 0.12) {
     clipSaved := ClipboardAll()
     A_Clipboard := ""
     Send("^c")
-    Sleep(CopyDelayMs // 2)
-    if !ClipWait(0.55) {
+    if !ClipWait(clipWaitSec) {
         A_Clipboard := clipSaved
         return ""
     }
@@ -329,13 +328,13 @@ TryCopySelection() {
 }
 
 TryCopyFieldAll() {
-    global CopyDelayMs
+    global CopyDelayMs, FieldClipWaitSec
     clipSaved := ClipboardAll()
     A_Clipboard := ""
     Send("^a")
-    Sleep(CopyDelayMs // 2)
+    Sleep(Max(12, CopyDelayMs // 4))
     Send("^c")
-    if !ClipWait(0.4) {
+    if !ClipWait(FieldClipWaitSec) {
         A_Clipboard := clipSaved
         return ""
     }
@@ -380,11 +379,11 @@ ShowOpsPopup(anchorX, anchorY) {
     global popupMode
     popupMode := "math"
     EnableNumbPopupHotkeys(opsGui.Hwnd)
-    WinActivate("ahk_id " opsGui.Hwnd)
-    editCtrl.Focus()
     global suppressOutsideDismiss
     suppressOutsideDismiss := true
     SetTimer(NumbPopupWatch, 25)
+    WinActivate("ahk_id " opsGui.Hwnd)
+    editCtrl.Focus()
 }
 
 ShowCasePopup(anchorX, anchorY) {

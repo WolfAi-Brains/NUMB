@@ -14,7 +14,7 @@ C:\WolfAi\NUMB\number-ops\NUMB.ahk
 
 ### Installer (other machines)
 
-Use **`Install\Install NUMB.bat`** or **`NUMB-Setup-1.4.6.exe`** — see **`Install\README.md`**. Installs to **`%LocalAppData%\WolfAi\NUMB`** with portable AutoHotkey v2.0.31; **no administrator** required.
+Use **`Install\Install NUMB.bat`** or **`NUMB-Setup-1.4.7.exe`** — see **`Install\README.md`**. Installs to **`%LocalAppData%\WolfAi\NUMB`** with portable AutoHotkey v2.0.31; **no administrator** required.
 
 ### Manual (this repo)
 
@@ -65,7 +65,10 @@ If the wrong text is grabbed or write-back fails, open **`NUMB.ahk`** and raise 
 
 ```autohotkey
 ClickDelayMs := 40   ; after click-to-focus
-CopyDelayMs  := 80   ; before/around Ctrl+A / Ctrl+C
+CopyDelayMs  := 80   ; field focus / select-all timing
+SelectionClipWaitSec := 0.12   ; first Ctrl+C (keep low for fast numeric fields)
+SelectionClipRetrySec := 0.38  ; second try after activate (case highlight)
+FieldClipWaitSec := 0.28       ; read whole numeric cell
 WriteDelayMs := 40   ; before typing the result
 ```
 
