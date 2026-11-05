@@ -1,0 +1,5 @@
+# Local settings / stats
+number-ops/numb.ini
+
+# Built installers (run Install\Build-Installer.ps1)
+Install/Output/
