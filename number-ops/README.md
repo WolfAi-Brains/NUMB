@@ -14,13 +14,23 @@ C:\WolfAi\NUMB\number-ops\NUMB.ahk
 
 ### Installer (other machines)
 
-Use **`Install\Install NUMB.bat`** or **`NUMB-Setup-1.4.7.exe`** — see **`Install\README.md`**. Installs to **`%LocalAppData%\WolfAi\NUMB`** with portable AutoHotkey v2.0.31; **no administrator** required.
+Use **`Install\Install NUMB.bat`** or **`NUMB-Setup-2.0.0.exe`** — see **`Install\README.md`**. Installs to **`%LocalAppData%\WolfAi\NUMB`** with portable AutoHotkey v2.0.31; **no administrator** required.
 
 ### Manual (this repo)
 
 1. Install [AutoHotkey v2](https://www.autohotkey.com/) (v2.0+, not v1), or run the installer above.
 2. Double-click **`Start NUMB.bat`**, or right-click **`NUMB.ahk`** → **Run script**.
 3. A tray icon labeled **NUMB** appears. Leave it running while you work in Ix.
+
+**Tray menu:** **Reload** reloads the script (updates without Exit). **Exit** stops NUMB — there is no Reload after Exit; start it again (below).
+
+### Start NUMB again after Exit
+
+| Method | How |
+|--------|-----|
+| **Install folder** | Open `%LocalAppData%\WolfAi\NUMB` → double-click **`Start NUMB.bat`** (while NUMB is running: tray → **Open install folder**) |
+| **Start menu** | **NUMB** shortcut (from the setup installer) |
+| **Logon startup** | If install used “Start when Windows starts”, sign out/in or reboot |
 
 Installed copies default to **`%LocalAppData%\WolfAi\NUMB`**. Optional dev copy to `C:\WolfAi\number-ops`: run **`Install-to-WolfAi.ps1`** (files only; use portable `AutoHotkey64.exe` or system AHK).
 
@@ -41,10 +51,18 @@ Copy-Item $bat (Join-Path $startup 'Start NUMB.bat')
 | Type `-45` | `508.25` |
 | Type `*2` or `/2` | Multiply / divide |
 | Type `(10+2)/2` | Full expression (replaces with result) |
+| Type `=32+54` | **Ignore** grabbed value; write `86` (Excel-style `=`) |
 | Type `100` | Replace with bare number |
 | Esc or empty Enter | Cancel, no change |
 
-**Text case:** highlight **only** the characters to change (not the whole paragraph) → **Ctrl+Shift+Click** → pick an icon. Apply uses **Ctrl+Shift+U/L** (A/a) or **paste over the highlight only** — **no Ctrl+A** on apply. Keep the popup open briefly; clicking an icon returns focus to the editor first.
+**Text case:** highlight the text → **Ctrl+Shift+Click** → pick an icon.
+
+| Where | Apply |
+|--------|--------|
+| **Ix / AutoCAD / imos (MText)** | **A/a** → Ctrl+Shift+U/L; **Ab / Ab Cd** → paste over highlight only (no Ctrl+A) |
+| **Other apps** (email, Word, …) | All icons paste transformed text; if the highlight was lost, NUMB merges into the field (Ctrl+A once on apply only) |
+
+Pre-selection grab: **Ctrl+C** on the highlight outside CAD; in CAD **only in MText/editor** (avoids COPYCLIP on the drawing). **NoActivate** case popup when you pre-selected.
 
 | Icon | Result |
 |------|--------|
@@ -55,7 +73,7 @@ Copy-Item $bat (Join-Path $startup 'Start NUMB.bat')
 
 Invalid math expressions still beep and show a tray tip on Enter.
 
-**AutoCAD Properties** (native palette): NUMB re-clicks the cell, pastes the result, and presses **Enter** to commit. If a value still does not stick, raise `WriteDelayMs` / `ClickDelayMs` at the top of `NUMB.ahk`.
+**AutoCAD Properties:** NUMB re-clicks the cell, pastes the result, and presses **Enter** to commit.
 
 **Popup position:** opens to the **right** of the field by default. Drag the **NUMB** bar to reposition; offset is saved in `numb.ini`. If the popup used to open at the top of the whole Ix Properties panel, delete `numb.ini` once after updating. Drag: press and hold the top **NUMB** bar (label turns green).
 

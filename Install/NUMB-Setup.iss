@@ -1,9 +1,9 @@
 ; Compile with Inno Setup 6: iscc NUMB-Setup.iss
-; Output: Install\Output\NUMB-Setup-1.4.7.exe
+; Output: Install\Output\NUMB-Setup-2.0.0.exe
 ; Per-user install — no administrator required.
 
 #define MyAppName "NUMB"
-#define MyAppVersion "1.4.7"
+#define MyAppVersion "2.0.0"
 #define MyAppPublisher "WolfAi"
 #define MyAppURL "mailto:yankolobo@gmail.com"
 
@@ -36,9 +36,13 @@ Source: "..\number-ops\Start NUMB.bat"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\number-ops\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "portable\AutoHotkey64.exe"; DestDir: "{app}"; Flags: ignoreversion
 
+[Tasks]
+Name: "startup"; Description: "Start {#MyAppName} when Windows starts"; GroupDescription: "Additional options:"; Flags: checkedonce
+
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\Start NUMB.bat"; IconFilename: "{app}\numb.ico"
 Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
+Name: "{userstartup}\{#MyAppName}"; Filename: "{app}\Start NUMB.bat"; IconFilename: "{app}\numb.ico"; Tasks: startup
 
 [Run]
 Filename: "{app}\Start NUMB.bat"; Description: "Start {#MyAppName}"; Flags: nowait postinstall skipifsilent

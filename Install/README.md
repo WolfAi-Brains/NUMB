@@ -17,9 +17,11 @@ Bundled **portable AutoHotkey v2.0.31** (`AutoHotkey64.exe` next to `NUMB.ahk`).
    .\Build-Installer.ps1
    ```
 
-4. Ship **`Output\NUMB-Setup-1.4.7.exe`**. Users run it **without** elevating.
+4. Ship **`Output\NUMB-Setup-2.0.0.exe`**. Users run it **without** elevating.
 
-Optional wizard tasks: logon startup, launch when finished.
+The wizard **checks “Start NUMB when Windows starts” by default** (Startup folder shortcut). Uncheck on the tasks page if you do not want logon startup.
+
+Optional: launch when finished (last wizard page).
 
 Uninstall removes NUMB and settings (`numb.ini`); it does not touch a separate system AutoHotkey install (this package does not require one).
 
@@ -36,7 +38,8 @@ cd C:\WolfAi\NUMB\Install
 | Parameter | Default | Purpose |
 |-----------|---------|---------|
 | `-Dest` | `%LocalAppData%\WolfAi\NUMB` | Install directory |
-| `-StartWithWindows` | off | Copy launcher into your Startup folder |
+| `-StartWithWindows` | **on** | Copy launcher into your Startup folder |
+| `-NoStartWithWindows` | off | Skip Startup folder (overrides default) |
 | `-LaunchNow` | off | Run `Start NUMB.bat` after copy |
 | `-SkipAutoHotkey` | off | Do not copy portable `AutoHotkey64.exe` |
 | `-InstallAutoHotkeySystem` | off | **Admin:** run `AutoHotkey_2.0.31_setup.exe` into Program Files (IT only) |
@@ -54,6 +57,8 @@ Or run `AutoHotkey_2.0.31_setup.exe` yourself, then install NUMB with `-SkipAuto
 ## After install
 
 Run **`Start NUMB.bat`** from the install folder (or use the startup task). Tray **NUMB** — **Ctrl+Shift+Click** a numeric field in Ix.
+
+**Reload** (tray menu) only works while NUMB is running. After **Exit**, run **`Start NUMB.bat`** again, use the **Start menu → NUMB** shortcut, or sign in again if logon startup was enabled.
 
 ## Refresh portable runtime
 

@@ -10,7 +10,7 @@ CoordMode "Mouse", "Screen"
 ; Install path (Windows): C:\WolfAi\NUMB\number-ops\NUMB.ahk
 ; =============================================================================
 
-APP_VERSION := "1.4.7"
+APP_VERSION := "2.0.0"
 
 ; --- Tunables (raise delays if Ix is slow to focus/select) -------------------
 ClickDelayMs := 40
@@ -19,6 +19,7 @@ WriteDelayMs := 40
 SelectionClipWaitSec := 0.12   ; first try — empty numeric fields must not sit here long
 SelectionClipRetrySec := 0.38  ; after activate, for slow MText / case highlight
 FieldClipWaitSec := 0.28       ; Ctrl+A / Ctrl+C on a numeric cell
+WmCopyProbeWaitSec := 0.06     ; quick WM_COPY attempts (fail fast)
 ; AutoCAD / native Properties palette: refocus cell and Enter to commit
 CommitEnterAfterWrite := true
 CommitEnterAfterCaseWrite := false
@@ -40,6 +41,7 @@ A_TrayMenu.Add("NUMB v" APP_VERSION, (*) => 0)
 A_TrayMenu.Disable("NUMB v" APP_VERSION)
 A_TrayMenu.Add()
 A_TrayMenu.Add("About", (*) => ShowAbout())
+A_TrayMenu.Add("Open install folder", (*) => NumbOpenInstallFolder())
 A_TrayMenu.Add()
 A_TrayMenu.Add("Reload", (*) => Reload())
 A_TrayMenu.Add("Exit", (*) => ExitApp())
@@ -101,29 +103,275 @@ StartNumberOp() {
     global ClickDelayMs, CopyDelayMs, baseValue, targetWin, fieldClickX, fieldClickY
     global caseSourceText, caseFromPreSelection
 
-    ; Ctrl+Shift+Click does not pass the click through — keep any existing highlight.
     MouseGetPos(&anchorX, &anchorY)
     fieldClickX := anchorX
     fieldClickY := anchorY
     targetWin := WinExist("A")
+    cadHost := IsCopyClipUnsafeHost(targetWin)
 
-    ; Copy highlight before WinActivate — activating can drop the selection in MText.
-    raw := TryCopySelection(SelectionClipWaitSec)
+    ; =================================================================
+    ; LOCKED — imos / Ix / AutoCAD routing (v1.8.5+). Do not change.
+    ; Properties → NumbNumericGrabProperties | else → NumbRunCaseOp only
+    ; =================================================================
+    if cadHost {
+        if NumbCadIsPropertiesPaletteContext(targetWin, anchorX, anchorY) {
+            raw := NumbNumericGrabProperties(anchorX, anchorY)
+            if (raw = "") {
+                Tip("Click a number field in Properties.")
+                return
+            }
+            if (IsTextForCase(raw)) {
+                Tip("Highlight the words to change, then Ctrl+Shift+Click on the highlight.")
+                return
+            }
+            if !NumbRouteGrabbedContent(raw, anchorX, anchorY, false)
+                Tip("No number found: " . Trunc(raw, 40))
+            return
+        }
+        NumbRunCaseOp(anchorX, anchorY, true)
+        return
+    }
+
+    ; --- Outside CAD: case from highlight, else numeric click ---
+    raw := NumbCaseGrabOutside(SelectionClipWaitSec)
     if (Trim(raw) = "" && targetWin) {
         try WinActivate("ahk_id " targetWin)
         Sleep(CopyDelayMs // 3)
-        raw := TryCopySelection(SelectionClipRetrySec)
+        targetWin := WinExist("A")
+        raw := NumbCaseGrabOutside(SelectionClipRetrySec)
     }
-
     if (Trim(raw) != "") {
-        routed := NumbRouteGrabbedContent(raw, anchorX, anchorY, true)
-        if (routed)
+        if NumbRouteGrabbedContent(raw, anchorX, anchorY, true)
             return
         Tip("No number or text found: " . Trunc(Trim(raw), 40))
         return
     }
 
-    ; No selection — numbers only (Ctrl+A is only for reading a numeric cell, never for case).
+    raw := NumbNumericGrabOutside()
+    if (raw = "") {
+        Tip("Click a number field (or highlight text first for case).")
+        return
+    }
+    if (IsTextForCase(raw)) {
+        Tip("Highlight the words to change, then Ctrl+Shift+Click on the highlight.")
+        return
+    }
+    if !NumbRouteGrabbedContent(raw, anchorX, anchorY, false)
+        Tip("No number found: " . Trunc(raw, 40))
+}
+
+; MText / in-place editor — never run numeric grab here. Properties palette is always numeric.
+NumbCadIsCaseContext(hwnd, x, y) {
+    if !IsCopyClipUnsafeHost(hwnd)
+        return false
+    if NumbCadIsPropertiesPaletteContext(hwnd, x, y)
+        return false
+    if IsCadInPlaceTextEditor(hwnd)
+        return true
+    if NumbCadMTextHasActiveSelection(hwnd, x, y)
+        return true
+    if NumbCadTextSurfaceAtPoint(x, y)
+        return true
+    return false
+}
+
+; MText / editor click on CAD — case only (never the numeric Ctrl+A path).
+NumbCadMustUseCasePath(hwnd, x, y) {
+    if !IsCopyClipUnsafeHost(hwnd)
+        return false
+    if NumbCadIsPropertiesPaletteContext(hwnd, x, y)
+        return false
+    if NumbCadIsCaseContext(hwnd, x, y)
+        return true
+    h := NumbHwndAtPoint(x, y)
+    loop 16 {
+        if !h
+            break
+        if NumbCadIsMtextOrRichEditHwnd(h) || NumbIsMultilineEditHwnd(h)
+            return true
+        h := DllCall("GetParent", "Ptr", h, "Ptr")
+    }
+    return false
+}
+
+NumbCadIsPropertiesPaletteContext(hwnd, x, y) {
+    if !IsCopyClipUnsafeHost(hwnd)
+        return false
+    h := NumbHwndAtPoint(x, y)
+    loop 24 {
+        if !h
+            break
+        try {
+            title := WinGetTitle("ahk_id " h)
+            if RegExMatch(title, "i)propert|properties|eigenschaft|palette")
+                return true
+        } catch {
+        }
+        cls := NumbHwndClassName(h)
+        if RegExMatch(cls, "i)Property|PropGrid|GridControl|Spread|Inspector")
+            return true
+        h := DllCall("GetParent", "Ptr", h, "Ptr")
+    }
+    try {
+        if RegExMatch(WinGetTitle("ahk_id " hwnd), "i)propert|properties|eigenschaft")
+            return true
+    } catch {
+    }
+    return false
+}
+
+NumbCadSafeForGlobalFieldSelectCopy(hwnd) {
+    global fieldClickX, fieldClickY
+    if NumbCadIsCaseContext(hwnd, fieldClickX, fieldClickY)
+        return false
+    if NumbCadIsPropertiesPaletteContext(hwnd, fieldClickX, fieldClickY)
+        return true
+    fh := NumbGetGuiThreadFocusHwnd(hwnd)
+    if NumbCadIsMtextOrRichEditHwnd(fh) || NumbIsMultilineEditHwnd(fh)
+        return false
+    if NumbHwndSelectionSpan(fh) > 80
+        return false
+    return true
+}
+
+NumbCopyFocusedFieldCadLegacy(clipWaitSec) {
+    global CopyDelayMs, targetWin, fieldClickX, fieldClickY
+    if !NumbCadIsPropertiesPaletteContext(targetWin, fieldClickX, fieldClickY)
+        return ""
+    clipSaved := ClipboardAll()
+    A_Clipboard := ""
+    Send("^a")
+    Sleep(Max(12, CopyDelayMs // 4))
+    Send("^c")
+    if !ClipWait(clipWaitSec) {
+        A_Clipboard := clipSaved
+        return ""
+    }
+    raw := Trim(A_Clipboard)
+    A_Clipboard := clipSaved
+    return raw
+}
+
+NumbRunCaseOp(anchorX, anchorY, cadHost) {
+    raw := NumbCaseGrabCad(SelectionClipWaitSec)
+    if (Trim(raw) = "")
+        raw := NumbCaseGrabCad(SelectionClipRetrySec)
+    if (Trim(raw) != "") {
+        if NumbRouteGrabbedContent(raw, anchorX, anchorY, true)
+            return
+        Tip("No number or text found: " . Trunc(Trim(raw), 40))
+        return
+    }
+    Tip("Highlight the words to change, then Ctrl+Shift+Click on the highlight.")
+}
+
+NumbCaseGrabOutside(waitSec) {
+    return TryCopySelection(waitSec)
+}
+
+NumbFindMtextEditHwnd(hwnd, x, y) {
+    try {
+        ctrl := ControlGetFocus("ahk_id " hwnd)
+        if RegExMatch(ctrl, "i)RichEdit|RICHEDIT|Scintilla") {
+            reHwnd := ControlGetHwnd(ctrl, "ahk_id " hwnd)
+            if reHwnd
+                return reHwnd
+        }
+    } catch {
+    }
+    for candidate in [NumbGetGuiThreadFocusHwnd(hwnd), NumbHwndAtPoint(x, y)] {
+        h := candidate
+        loop 22 {
+            if !h
+                break
+            if NumbCadIsMtextOrRichEditHwnd(h) || NumbIsMultilineEditHwnd(h)
+                return h
+            h := DllCall("GetParent", "Ptr", h, "Ptr")
+        }
+    }
+    return 0
+}
+
+NumbCaseGrabCad(waitSec) {
+    global SelectionClipRetrySec
+    raw := TryCopySelection(waitSec)
+    if (Trim(raw) != "" && IsTextForCase(raw))
+        return raw
+    raw := TryCopyCadMTextSelectionGrab(waitSec)
+    if (Trim(raw) != "")
+        return raw
+    long := Max(waitSec, SelectionClipRetrySec)
+    raw := TryCopySelection(long)
+    if (Trim(raw) != "" && IsTextForCase(raw))
+        return raw
+    return TryCopyCadMTextSelectionGrab(long)
+}
+
+NumbRawLooksNumeric(raw) {
+    raw := Trim(raw)
+    if (raw = "")
+        return false
+    if (ParseNumber(raw) != "")
+        return true
+    return RegExMatch(raw, "^[\d\s.,+\-eE]+$")
+}
+
+; =============================================================================
+; LOCKED — iX Properties numeric only (v1.8.4: no bare Ctrl+C — avoids COPYCLIP).
+; =============================================================================
+NumbNumericGrabProperties(anchorX, anchorY) {
+    global targetWin, ClickDelayMs, CopyDelayMs, FieldClipWaitSec, WmCopyProbeWaitSec
+    global caseFromPreSelection, caseFullText, caseSelectionNeedle
+    caseFromPreSelection := false
+    caseFullText := ""
+    caseSelectionNeedle := ""
+    if targetWin {
+        try WinActivate("ahk_id " targetWin)
+        Sleep(CopyDelayMs // 4)
+    }
+    Click("Left")
+    Sleep(ClickDelayMs // 2)
+    targetWin := WinExist("A")
+    raw := NumbTryCopyCadPropertyFromChain(NumbGetGuiThreadFocusHwnd(targetWin), WmCopyProbeWaitSec)
+    if (raw != "")
+        return raw
+    raw := NumbTryCopyCadPropertyFromChain(NumbHwndAtPoint(anchorX, anchorY), WmCopyProbeWaitSec)
+    if (raw != "")
+        return raw
+    return NumbCopyFocusedFieldCadLegacy(FieldClipWaitSec)
+}
+
+NumbNumericGrabCad(anchorX, anchorY) {
+    global targetWin, ClickDelayMs, CopyDelayMs, caseFromPreSelection, caseFullText, caseSelectionNeedle
+    global FieldClipWaitSec, WmCopyProbeWaitSec
+    caseFromPreSelection := false
+    caseFullText := ""
+    caseSelectionNeedle := ""
+    if NumbCadIsCaseContext(targetWin, anchorX, anchorY)
+        return ""
+    if NumbCadIsPropertiesPaletteContext(targetWin, anchorX, anchorY)
+        return NumbNumericGrabProperties(anchorX, anchorY)
+    probe := WmCopyProbeWaitSec
+    if targetWin {
+        try WinActivate("ahk_id " targetWin)
+        Sleep(CopyDelayMs // 3)
+    }
+    Click("Left")
+    Sleep(ClickDelayMs // 2)
+    targetWin := WinExist("A")
+    raw := TryCopyCadNumericAtClickPoint(anchorX, anchorY, probe)
+    if (raw != "")
+        return raw
+    raw := NumbTryCopyCadPropertyFromChain(NumbGetGuiThreadFocusHwnd(targetWin), probe)
+    if (raw != "")
+        return raw
+    if NumbCadSafeForGlobalFieldSelectCopy(targetWin)
+        return NumbCopyFocusedFieldCadLegacy(FieldClipWaitSec)
+    return ""
+}
+
+NumbNumericGrabOutside() {
+    global targetWin, ClickDelayMs, CopyDelayMs, caseFromPreSelection, caseFullText, caseSelectionNeedle
     caseFromPreSelection := false
     caseFullText := ""
     caseSelectionNeedle := ""
@@ -134,21 +382,7 @@ StartNumberOp() {
     Click("Left")
     Sleep(ClickDelayMs // 2)
     targetWin := WinExist("A")
-
-    raw := TryCopyFieldAll()
-    if (raw = "") {
-        Tip("Select text first (case) or click a number field. Copy timed out.")
-        return
-    }
-    if (IsTextForCase(raw)) {
-        Tip("Highlight the words to change, then Ctrl+Shift+Click (no Ctrl+A).")
-        return
-    }
-
-    routed := NumbRouteGrabbedContent(raw, anchorX, anchorY, false)
-    if (routed)
-        return
-    Tip("No number or text found: " . Trunc(raw, 40))
+    return TryCopyFieldAllOutside()
 }
 
 NumbRouteGrabbedContent(raw, anchorX, anchorY, fromPreSelection) {
@@ -175,35 +409,477 @@ NumbRouteGrabbedContent(raw, anchorX, anchorY, fromPreSelection) {
     return false
 }
 
-IsAutoCadHost(hwnd) {
+; imos, AutoCAD, Ix — Ctrl+C on the drawing starts COPYCLIP (not used for case grab there).
+IsCopyClipUnsafeHost(hwnd) {
+    if !hwnd
+        return false
     try {
         exe := StrLower(WinGetProcessName("ahk_id " hwnd))
+        title := StrLower(WinGetTitle("ahk_id " hwnd))
     } catch {
         return false
     }
-    return InStr(exe, "acad") || InStr(exe, "ix")
+    for needle in ["acad", "autocad", "icad", "intellicad", "bricscad", "zwcad", "gcad", "progecad", "cms", "ix", "imos"] {
+        if InStr(exe, needle)
+            return true
+    }
+    if RegExMatch(title, "i)autocad|autodesk|\bix\b|imos|drawing editor|bricscad|intellicad")
+        return true
+    return false
 }
 
-IsCadInPlaceTextEditor(hwnd) {
-    if !IsAutoCadHost(hwnd)
+IsTextInputControlClass(className) {
+    if (className = "")
+        return false
+    if RegExMatch(className, "i)^RichEdit|^RICHEDIT|Scintilla|TXTextControl")
+        return true
+    return false
+}
+
+NumbClassNnToClassName(classNn) {
+    if (classNn = "")
+        return ""
+    return RegExReplace(classNn, "\d+$", "")
+}
+
+NumbGetGuiThreadFocusHwnd(hwnd := 0) {
+    if !hwnd
+        hwnd := WinExist("A")
+    if !hwnd
+        return 0
+    ti := DllCall("GetWindowThreadProcessId", "Ptr", hwnd, "Ptr", 0, "UInt")
+    buf := Buffer(72, 0)
+    NumPut("UInt", 72, buf, 0)
+    if !DllCall("GetGUIThreadInfo", "UInt", ti, "Ptr", buf)
+        return 0
+    return NumGet(buf, 16, "Ptr")
+}
+
+NumbHwndClassName(hwnd) {
+    if !hwnd
+        return ""
+    buf := Buffer(512, 0)
+    n := DllCall("GetClassName", "Ptr", hwnd, "Ptr", buf, "Int", 256)
+    return n ? StrGet(buf, "UTF-16") : ""
+}
+
+NumbHwndAtPoint(x, y) {
+    pt := Buffer(8, 0)
+    NumPut("Int", x, pt, 0)
+    NumPut("Int", y, pt, 4)
+    return DllCall("WindowFromPoint", "Int64", NumGet(pt, 0, "Int64"), "Ptr")
+}
+
+NumbIsMultilineEditHwnd(hwnd) {
+    cls := NumbHwndClassName(hwnd)
+    if !RegExMatch(cls, "i)^Edit\d*$")
+        return false
+    rect := Buffer(16, 0)
+    if !DllCall("GetClientRect", "Ptr", hwnd, "Ptr", rect)
+        return false
+    return NumGet(rect, 12, "Int") > 48
+}
+
+NumbCadTextSurfaceOnHwndChain(hwnd) {
+    loop 18 {
+        if !hwnd
+            break
+        cls := NumbHwndClassName(hwnd)
+        if IsTextInputControlClass(cls) || NumbIsMultilineEditHwnd(hwnd)
+            return true
+        try {
+            title := WinGetTitle("ahk_id " hwnd)
+            if RegExMatch(title, "i)mtext|multiline|text editor|in-place|inplace|text edit|annotation")
+                return true
+        } catch {
+        }
+        hwnd := DllCall("GetParent", "Ptr", hwnd, "Ptr")
+    }
+    return false
+}
+
+; Ctrl+Shift+Click over the MText canvas (not Properties single-line cells).
+NumbCadTextSurfaceAtPoint(x, y) {
+    if !IsCopyClipUnsafeHost(WinExist("A"))
+        return false
+    return NumbCadTextSurfaceOnHwndChain(NumbHwndAtPoint(x, y))
+}
+
+; True only when click is on a single-line property Edit (not MText / drawing).
+NumbCadLikelyPropertyNumericClick(x, y) {
+    if !IsCopyClipUnsafeHost(WinExist("A"))
+        return false
+    hwnd := NumbHwndAtPoint(x, y)
+    loop 22 {
+        if !hwnd
+            break
+        if NumbCadIsMtextOrRichEditHwnd(hwnd)
+            return false
+        if NumbIsMultilineEditHwnd(hwnd)
+            return false
+        cls := NumbHwndClassName(hwnd)
+        if RegExMatch(cls, "i)^Edit")
+            return true
+        hwnd := DllCall("GetParent", "Ptr", hwnd, "Ptr")
+    }
+    return false
+}
+
+NumbCadBlockNumericGrab(hwnd, x, y) {
+    if !IsCopyClipUnsafeHost(hwnd)
+        return false
+    if NumbCadLikelyPropertyNumericClick(x, y)
+        return false
+    return true
+}
+
+NumbHwndHasTextSelection(hwnd) {
+    if !hwnd
+        return false
+    span := NumbHwndSelectionSpan(hwnd)
+    return span > 0 && span < 500000
+}
+
+NumbHwndSelectionSpan(hwnd) {
+    if !hwnd
+        return 0
+    try {
+        packed := DllCall("SendMessage", "Ptr", hwnd, "UInt", 0xB0, "Ptr", 0, "Ptr", 0, "Ptr")
+        if (packed != -1) {
+            start := packed & 0xFFFF
+            end := (packed >> 16) & 0xFFFF
+            if (end > start)
+                return end - start
+        }
+    } catch {
+    }
+    try {
+        chrg := Buffer(8, 0)
+        DllCall("SendMessage", "Ptr", hwnd, "UInt", 0x043B, "Ptr", 0, "Ptr", chrg, "Ptr")
+        end := NumGet(chrg, 4, "Int")
+        start := NumGet(chrg, 0, "Int")
+        if (end > start)
+            return end - start
+    } catch {
+    }
+    return 0
+}
+
+NumbFindHwndWithSelection(hwnd, x, y) {
+    for candidate in [NumbGetGuiThreadFocusHwnd(hwnd), NumbHwndAtPoint(x, y)] {
+        h := candidate
+        loop 22 {
+            if !h
+                break
+            if NumbHwndHasTextSelection(h)
+                return h
+            h := DllCall("GetParent", "Ptr", h, "Ptr")
+        }
+    }
+    return 0
+}
+
+NumbCadMTextHasActiveSelection(hwnd := 0, x := 0, y := 0) {
+    if !IsCopyClipUnsafeHost(hwnd ? hwnd : WinExist("A"))
+        return false
+    return NumbFindHwndWithSelection(hwnd, x, y) != 0
+}
+
+TryCopyCadMTextSelectionGrab(waitSec) {
+    global targetWin, fieldClickX, fieldClickY
+    win := targetWin ? targetWin : WinExist("A")
+    selHwnd := NumbFindHwndWithSelection(win, fieldClickX, fieldClickY)
+    if !selHwnd
+        selHwnd := NumbFindMtextEditHwnd(win, fieldClickX, fieldClickY)
+    if !selHwnd
+        return ""
+    raw := TryCopyWmCopyHwnd(selHwnd, waitSec)
+    if (Trim(raw) != "")
+        return raw
+    return TryCopyWmCopyHwnd(selHwnd, Max(waitSec, 0.35))
+}
+
+NumbCadIsMtextOrRichEditHwnd(hwnd) {
+    if !hwnd
+        return false
+    cls := NumbHwndClassName(hwnd)
+    if IsTextInputControlClass(cls) || NumbIsMultilineEditHwnd(hwnd)
+        return true
+    return false
+}
+
+NumbCopyAllFromEditHwnd(hwnd, clipWaitSec) {
+    if NumbCadIsMtextOrRichEditHwnd(hwnd)
+        return ""
+    cls := NumbHwndClassName(hwnd)
+    if !RegExMatch(cls, "i)^Edit")
+        return ""
+    if NumbIsMultilineEditHwnd(hwnd)
+        return ""
+    clipSaved := ClipboardAll()
+    A_Clipboard := ""
+    DllCall("SendMessage", "Ptr", hwnd, "UInt", 0xB1, "Ptr", 0, "Ptr", -1, "Ptr") ; EM_SETSEL all — this control only
+    DllCall("SendMessage", "Ptr", hwnd, "UInt", 0x301, "Ptr", 0, "Ptr", 0, "Ptr")
+    if !ClipWait(clipWaitSec) {
+        A_Clipboard := clipSaved
+        return ""
+    }
+    raw := Trim(A_Clipboard)
+    A_Clipboard := clipSaved
+    return raw
+}
+
+NumbTryCopyCadPropertyFromChain(startHwnd, clipWaitSec) {
+    hwnd := startHwnd
+    loop 10 {
+        if !hwnd
+            break
+        if NumbCadIsMtextOrRichEditHwnd(hwnd) || NumbIsMultilineEditHwnd(hwnd) {
+            hwnd := DllCall("GetParent", "Ptr", hwnd, "Ptr")
+            continue
+        }
+        cls := NumbHwndClassName(hwnd)
+        if RegExMatch(cls, "i)^Edit") {
+            raw := NumbCopyAllFromEditHwnd(hwnd, clipWaitSec)
+            if (raw != "")
+                return raw
+        }
+        raw := Trim(TryCopyWmCopyHwnd(hwnd, clipWaitSec))
+        if (raw != "" && ParseNumber(raw) != "")
+            return raw
+        if (raw != "" && !RegExMatch(raw, "[A-Za-z]{4,}"))
+            return raw
+        hwnd := DllCall("GetParent", "Ptr", hwnd, "Ptr")
+    }
+    return ""
+}
+
+TryCopyCadNumericAtClickPoint(x, y, clipWaitSec) {
+    global targetWin, FieldClipWaitSec
+    if (clipWaitSec = "")
+        clipWaitSec := FieldClipWaitSec
+    raw := NumbTryCopyCadPropertyFromChain(NumbHwndAtPoint(x, y), clipWaitSec)
+    if (raw != "")
+        return raw
+    return NumbTryCopyCadPropertyFromChain(NumbGetGuiThreadFocusHwnd(targetWin), clipWaitSec)
+}
+
+TryCopyWmCopyHwnd(hwnd, clipWaitSec := 0.12) {
+    if !hwnd
+        return ""
+    clipSaved := ClipboardAll()
+    A_Clipboard := ""
+    try DllCall("SendMessage", "Ptr", hwnd, "UInt", 0x301, "Ptr", 0, "Ptr", 0, "Ptr") ; WM_COPY
+    if !ClipWait(clipWaitSec) {
+        A_Clipboard := clipSaved
+        return ""
+    }
+    raw := A_Clipboard
+    A_Clipboard := clipSaved
+    return raw
+}
+
+TryCopyWmCopyFromPointChain(x, y, clipWaitSec := 0.12) {
+    global WmCopyProbeWaitSec
+    if (clipWaitSec = 0.12)
+        clipWaitSec := WmCopyProbeWaitSec
+    hwnd := NumbHwndAtPoint(x, y)
+    loop 10 {
+        if !hwnd
+            break
+        raw := TryCopyWmCopyHwnd(hwnd, clipWaitSec)
+        if (Trim(raw) != "")
+            return raw
+        hwnd := DllCall("GetParent", "Ptr", hwnd, "Ptr")
+    }
+    return ""
+}
+
+NumbGetCadFocusTextClass(hwnd := 0) {
+    if !hwnd
+        hwnd := WinExist("A")
+    cls := NumbHwndClassName(NumbGetGuiThreadFocusHwnd(hwnd))
+    if IsTextInputControlClass(cls)
+        return cls
+    cls := NumbGetFocusedControlClass(hwnd)
+    if IsTextInputControlClass(cls)
+        return cls
+    return cls
+}
+
+; RichEdit / MText caret — do not run numeric click+Ctrl+A here.
+NumbCadBlockNumericForTextFocus(hwnd := 0) {
+    if !hwnd
+        hwnd := WinExist("A")
+    if !IsCopyClipUnsafeHost(hwnd)
+        return false
+    if IsCadInPlaceTextEditor(hwnd)
+        return true
+    cls := NumbGetCadFocusTextClass(hwnd)
+    return IsTextInputControlClass(cls)
+}
+
+NumbCadSafeForSelectionCopy(hwnd := 0) {
+    if !hwnd
+        hwnd := WinExist("A")
+    global fieldClickX, fieldClickY
+    if NumbCadTextSurfaceAtPoint(fieldClickX, fieldClickY)
+        return true
+    if !IsCopyClipUnsafeHost(hwnd)
+        return true
+    if IsCadInPlaceTextEditor(hwnd)
+        return true
+    if IsTextInputControlClass(NumbGetCadFocusTextClass(hwnd))
+        return true
+    return false
+}
+
+; MText / in-place note editor in imos, AutoCAD, Ix — Ctrl+C is selection copy, not COPYCLIP.
+IsCadInPlaceTextEditor(hwnd := 0) {
+    if !hwnd
+        hwnd := WinExist("A")
+    if !hwnd
+        return false
+    if !IsCopyClipUnsafeHost(hwnd)
         return false
     try {
-        ctrl := ControlGetFocus("ahk_id " hwnd)
-        if !ctrl
-            return false
-        return RegExMatch(ctrl, "i)RichEdit|Edit")
+        title := WinGetTitle("ahk_id " hwnd)
+        if RegExMatch(title, "i)mtext|multiline|text editor|in-place|inplace|text edit|annotation|notiz|beschreibung")
+            return true
     } catch {
-        return false
     }
+    cls := NumbGetCadFocusTextClass(hwnd)
+    if IsTextInputControlClass(cls)
+        return true
+    try {
+        ctrl := ControlGetFocus("ahk_id " hwnd)
+        if RegExMatch(ctrl, "i)RichEdit|RICHEDIT|Scintilla")
+            return true
+    } catch {
+    }
+    return false
+}
+
+NumbGetFocusedControlClass(hwnd) {
+    if !hwnd
+        return ""
+    try {
+        ctrl := ControlGetFocus("ahk_id " hwnd)
+        return NumbClassNnToClassName(ctrl)
+    } catch {
+        return ""
+    }
+}
+
+; Pre-selection: Ctrl+C outside CAD; in CAD use WM_COPY first, then Ctrl+C only in text focus.
+TryCopyPreSelectionGrab(waitSec) {
+    global targetWin, fieldClickX, fieldClickY
+    win := targetWin ? targetWin : WinExist("A")
+    if !IsCopyClipUnsafeHost(win)
+        return TryCopySelection(waitSec)
+    if NumbCadLikelyPropertyNumericClick(fieldClickX, fieldClickY)
+        return ""
+    raw := TryCopySelection(waitSec)
+    if (Trim(raw) != "")
+        return raw
+    raw := TryCopyCadMTextSelectionGrab(waitSec)
+    if (Trim(raw) != "")
+        return raw
+    raw := TryCopyWmCopyFromPointChain(fieldClickX, fieldClickY, waitSec)
+    if (Trim(raw) != "")
+        return raw
+    raw := TryCopySelectionViaWmCopy(win, waitSec)
+    if (Trim(raw) != "")
+        return raw
+    return TryCopySelection(Max(waitSec, 0.38))
+}
+
+TryCopySelectionViaWmCopy(hwnd, clipWaitSec := 0.12) {
+    clipSaved := ClipboardAll()
+    A_Clipboard := ""
+    sent := false
+    focusHwnd := NumbGetGuiThreadFocusHwnd(hwnd)
+    if focusHwnd {
+        try {
+            DllCall("SendMessage", "Ptr", focusHwnd, "UInt", 0x301, "Ptr", 0, "Ptr", 0, "Ptr")
+            sent := true
+        } catch {
+        }
+    }
+    if !sent {
+        try {
+            ctrl := ControlGetFocus("ahk_id " hwnd)
+            if (ctrl = "") {
+                A_Clipboard := clipSaved
+                return ""
+            }
+            SendMessage(0x301, 0, 0, ctrl, "ahk_id " hwnd)
+        } catch {
+            A_Clipboard := clipSaved
+            return ""
+        }
+    }
+    if !ClipWait(clipWaitSec) {
+        A_Clipboard := clipSaved
+        return ""
+    }
+    raw := A_Clipboard
+    A_Clipboard := clipSaved
+    return raw
+}
+
+; imos / CAD: targeted read only (no global Ctrl+A). Other apps: normal field read.
+TryCopyFieldAllOutside() {
+    global CopyDelayMs, FieldClipWaitSec
+    clipSaved := ClipboardAll()
+    A_Clipboard := ""
+    Send("^a")
+    Sleep(Max(12, CopyDelayMs // 4))
+    Send("^c")
+    if !ClipWait(FieldClipWaitSec) {
+        A_Clipboard := clipSaved
+        return ""
+    }
+    raw := Trim(A_Clipboard)
+    A_Clipboard := clipSaved
+    return raw
+}
+
+TryCopyFieldAll() {
+    global targetWin, fieldClickX, fieldClickY, FieldClipWaitSec
+    if IsCopyClipUnsafeHost(targetWin)
+        return TryCopyCadNumericAtClickPoint(fieldClickX, fieldClickY, FieldClipWaitSec)
+    return TryCopyFieldAllOutside()
+}
+
+TryCopySelection(clipWaitSec := 0.12) {
+    clipSaved := ClipboardAll()
+    A_Clipboard := ""
+    Send("^c")
+    if !ClipWait(clipWaitSec) {
+        A_Clipboard := clipSaved
+        return ""
+    }
+    raw := A_Clipboard
+    A_Clipboard := clipSaved
+    return raw
 }
 
 ApplyCaseToSelectionOnly(mode) {
+    global targetWin
+    if IsCopyClipUnsafeHost(targetWin)
+        ApplyCaseCadIx(mode)
+    else
+        ApplyCaseOutsideHost(mode)
+}
+
+ApplyCaseCadIx(mode) {
+    ; LOCKED — CAD / Ix / imos MText case apply (selection only). Do not change.
     global targetWin, WriteDelayMs, caseSourceText
     if targetWin {
         try WinActivate("ahk_id " targetWin)
         Sleep(WriteDelayMs)
     }
-    ; Never Ctrl+A here — that selects the whole paragraph and paste replaces all of it.
     if (mode = "upper") {
         Send("^+u")
         return
@@ -220,6 +896,127 @@ ApplyCaseToSelectionOnly(mode) {
         Tip("Could not paste over selection.")
         return
     }
+    Send("^v")
+    Sleep(WriteDelayMs // 2)
+    A_Clipboard := clipSaved
+}
+
+; Outside CAD/Ix case only — ClipWait must not require "changed" (lower/title often match prior copy).
+NumbCaseOutsidePasteText(newSel) {
+    global WriteDelayMs
+    if (Trim(newSel) = "")
+        return false
+    clipSaved := ClipboardAll()
+    A_Clipboard := newSel
+    if !ClipWait(0.5, 0) {
+        A_Clipboard := clipSaved
+        return false
+    }
+    Send("^v")
+    Sleep(WriteDelayMs // 2)
+    A_Clipboard := clipSaved
+    return true
+}
+
+ApplyCaseOutsideHost(mode) {
+    global targetWin, WriteDelayMs, caseSourceText, caseFromPreSelection
+    if (Trim(caseSourceText) = "") {
+        Tip("Nothing to apply.")
+        return
+    }
+    newSel := TransformCase(caseSourceText, mode)
+    if (Trim(newSel) = "") {
+        Tip("Nothing to apply.")
+        return
+    }
+    if targetWin {
+        try WinActivate("ahk_id " targetWin)
+        Sleep(WriteDelayMs)
+    }
+    if caseFromPreSelection && TryPasteCaseWithoutRecopy(newSel)
+        return
+    if TryPasteCaseOverSelection(newSel)
+        return
+    ApplyCaseMergedFieldReplace(newSel)
+}
+
+TryPasteCaseWithoutRecopy(newSel) {
+    return NumbCaseOutsidePasteText(newSel)
+}
+
+CaseSelectionMatchesGrabbed(clipText) {
+    global caseSourceText, caseSourceRaw
+    clipText := SanitizeGrabbedText(clipText)
+    if (clipText = "")
+        return false
+    for src in [caseSourceText, caseSourceRaw, SanitizeGrabbedText(caseSourceRaw)] {
+        if (src = "")
+            continue
+        if (clipText = src)
+            return true
+        if (StrLower(clipText) = StrLower(src))
+            return true
+    }
+    return false
+}
+
+TryReadActiveSelection(&text) {
+    global SelectionClipWaitSec
+    clipSaved := ClipboardAll()
+    A_Clipboard := ""
+    Send("^c")
+    if !ClipWait(SelectionClipWaitSec) {
+        A_Clipboard := clipSaved
+        return false
+    }
+    text := A_Clipboard
+    A_Clipboard := clipSaved
+    return true
+}
+
+TryPasteCaseOverSelection(newSel) {
+    global WriteDelayMs
+    if (Trim(newSel) = "")
+        return false
+    sel := ""
+    if !TryReadActiveSelection(&sel)
+        return false
+    if !CaseSelectionMatchesGrabbed(sel)
+        return false
+    return NumbCaseOutsidePasteText(newSel)
+}
+
+ApplyCaseMergedFieldReplace(newSel) {
+    global WriteDelayMs, CopyDelayMs, FieldClipWaitSec, caseSourceText, caseSourceRaw
+    if (Trim(newSel) = "") {
+        Tip("Nothing to apply.")
+        return
+    }
+    clipSaved := ClipboardAll()
+    A_Clipboard := ""
+    Send("^a")
+    Sleep(Max(12, CopyDelayMs // 4))
+    Send("^c")
+    if !ClipWait(FieldClipWaitSec) {
+        A_Clipboard := clipSaved
+        Tip("Could not read the field to apply case.")
+        return
+    }
+    full := SanitizeGrabbedText(A_Clipboard)
+    out := MergeCaseIntoFullText(full, newSel, &errMsg)
+    if (out = "") {
+        A_Clipboard := clipSaved
+        Tip(errMsg != "" ? errMsg : "Could not apply case to this text.")
+        return
+    }
+    A_Clipboard := out
+    if !ClipWait(0.5, 0) {
+        A_Clipboard := clipSaved
+        Tip("Could not paste updated text.")
+        return
+    }
+    Send("^a")
+    Sleep(WriteDelayMs)
     Send("^v")
     Sleep(WriteDelayMs // 2)
     A_Clipboard := clipSaved
@@ -314,35 +1111,6 @@ TryCopyFieldAllInPlace() {
     return SanitizeGrabbedText(full)
 }
 
-TryCopySelection(clipWaitSec := 0.12) {
-    clipSaved := ClipboardAll()
-    A_Clipboard := ""
-    Send("^c")
-    if !ClipWait(clipWaitSec) {
-        A_Clipboard := clipSaved
-        return ""
-    }
-    raw := A_Clipboard
-    A_Clipboard := clipSaved
-    return raw
-}
-
-TryCopyFieldAll() {
-    global CopyDelayMs, FieldClipWaitSec
-    clipSaved := ClipboardAll()
-    A_Clipboard := ""
-    Send("^a")
-    Sleep(Max(12, CopyDelayMs // 4))
-    Send("^c")
-    if !ClipWait(FieldClipWaitSec) {
-        A_Clipboard := clipSaved
-        return ""
-    }
-    raw := Trim(A_Clipboard)
-    A_Clipboard := clipSaved
-    return raw
-}
-
 ; --- Popup UI ---------------------------------------------------------------
 ShowOpsPopup(anchorX, anchorY) {
     global opsGui, editHwnd, dragLabelCtrl, PopupWidth, PopupOffsetX, PopupOffsetY, PopupEstHeight, dragZoneH
@@ -390,10 +1158,15 @@ ShowCasePopup(anchorX, anchorY) {
     global opsGui, dragLabelCtrl, PopupOffsetX, PopupOffsetY, dragZoneH, CasePopupWidth
     global fieldRectLeft, fieldRectTop, fieldRectRight, fieldRectBottom, dragActive
     global caseSourceText, casePreviewCtrl, caseIconEntries, caseHoverActive, popupMode, caseFromPreSelection
+    global caseSourceRaw, targetWin
 
     preSel := caseFromPreSelection
+    rawSnap := caseSourceRaw
+    txtSnap := caseSourceText
     CloseOpsPopup()
     caseFromPreSelection := preSel
+    caseSourceRaw := rawSnap
+    caseSourceText := txtSnap
 
     GetFieldRectAtPoint(anchorX, anchorY, &fieldRectLeft, &fieldRectTop, &fieldRectRight, &fieldRectBottom)
 
@@ -446,13 +1219,11 @@ ShowCasePopup(anchorX, anchorY) {
     opsGui.OnEvent("Escape", (*) => CloseOpsPopup())
 
     showOpts := "x" gx " y" gy " w" CasePopupWidth " h" guiH
-    if caseFromPreSelection
+    if caseFromPreSelection || !IsCopyClipUnsafeHost(targetWin)
         showOpts .= " NoActivate"
     opsGui.Show(showOpts)
     popupMode := "case"
     EnableCasePopupHotkeys(opsGui.Hwnd)
-    if !caseFromPreSelection
-        WinActivate("ahk_id " opsGui.Hwnd)
     global suppressOutsideDismiss
     suppressOutsideDismiss := true
     SetTimer(NumbPopupWatch, 25)
@@ -487,20 +1258,24 @@ CaseHoverTick() {
 }
 
 CaseIconClick(mode, *) {
-    global caseSourceText, targetWin, WriteDelayMs
+    global caseSourceText, caseSourceRaw, caseFromPreSelection, targetWin, WriteDelayMs
     IncrementUseCount()
     src := caseSourceText
+    raw := caseSourceRaw
+    fromPre := caseFromPreSelection
     win := targetWin
     CloseOpsPopup()
+    caseSourceText := src
+    caseSourceRaw := raw
+    caseFromPreSelection := fromPre
+    targetWin := win
     if (Trim(src) = "") {
         Tip("Nothing to apply.")
         return
     }
-    caseSourceText := src
-    targetWin := win
     if targetWin {
         try WinActivate("ahk_id " targetWin)
-        Sleep(40)
+        Sleep(WriteDelayMs)
     }
     ApplyCaseToSelectionOnly(mode)
 }
@@ -702,11 +1477,19 @@ CloseOpsPopup() {
 
 ; --- Expression helpers -----------------------------------------------------
 ; Operator-leading input applies to the grabbed base (+56, *2, /(1+1)).
+; Leading '=' (Excel-style) ignores the base and evaluates the rest (=32+54).
 ; Input starting with '(' or a bare number / full expression is evaluated as-is.
 BuildExpression(base, expr) {
     expr := RegExReplace(expr, "\s+", "")
     if expr = ""
         return ""
+
+    if (SubStr(expr, 1, 1) = "=") {
+        expr := SubStr(expr, 2)
+        if (expr = "")
+            return ""
+        return expr
+    }
 
     if RegExMatch(expr, "^[+\-*/]")
         return String(base) . expr
@@ -876,15 +1659,26 @@ ShowAbout() {
     global APP_VERSION, useCount
     MsgBox(
         "NUMB v" APP_VERSION "`n`n"
-        . "Ctrl+Shift+Click a number, type +56 / *2 / (10+2)/2, Enter.`n"
-        . "Or click text for case: A / a / Ab / Ab Cd.`n`n"
+        . "Ctrl+Shift+Click a number, type +56 / *2 / (10+2)/2, or =32+54 (ignore field), Enter.`n"
+        . "Highlight text for case (MText or email), Ctrl+Shift+Click — A/a/Ab/Ab Cd.`n"
+        . "Numbers: Ctrl+Shift+Click a property/number field (Ix/imos/AutoCAD) or any numeric field elsewhere.`n"
+        . "Formulas: =32+54 ignores the current value.`n`n"
         . "Uses so far: " useCount "`n`n"
+        . "After Exit: double-click Start NUMB.bat in the install folder`n"
+        . "(tray menu Open install folder), or use the Start menu NUMB shortcut.`n"
+        . "If you chose logon startup at install, sign in again to auto-start.`n`n"
         . "Created by Wolf`n"
         . "5/11/2026`n"
         . "yankolobo@gmail.com",
         "About NUMB",
         "Iconi"
     )
+}
+
+NumbOpenInstallFolder(*) {
+    try Run(A_ScriptDir)
+    catch as err
+        Tip("Could not open folder: " err.Message)
 }
 
 Tip(msg) {

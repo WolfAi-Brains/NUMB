@@ -13,6 +13,7 @@
 param(
     [string]$Dest = (Join-Path $env:LOCALAPPDATA 'WolfAi\NUMB'),
     [switch]$StartWithWindows,
+    [switch]$NoStartWithWindows,
     [switch]$LaunchNow,
     [switch]$SkipAutoHotkey,
     [switch]$InstallAutoHotkeySystem
@@ -84,7 +85,11 @@ if (-not $SkipAutoHotkey) {
     Write-Host 'Skipped portable AutoHotkey (-SkipAutoHotkey). Start NUMB.bat needs v2 on PATH or beside the script.'
 }
 
-if ($StartWithWindows) {
+$addStartup = -not $NoStartWithWindows
+if ($PSBoundParameters.ContainsKey('StartWithWindows')) {
+    $addStartup = [bool]$StartWithWindows
+}
+if ($addStartup) {
     $startup = [Environment]::GetFolderPath('Startup')
     $linkName = Join-Path $startup 'NUMB.bat'
     $bat = Join-Path $Dest 'Start NUMB.bat'
