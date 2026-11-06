@@ -6,11 +6,12 @@ CoordMode "Mouse", "Screen"
 
 ; =============================================================================
 ; NUMB — in-place arithmetic on numeric fields; case conversion on text
-; Hotkey: Ctrl+Shift+Click — text: select first, then click; numbers: click field (or select)
+; Hotkey: Ctrl+Alt+Click — text: select first, then click; numbers: click field (or select)
 ; Install path (Windows): C:\WolfAi\NUMB\number-ops\NUMB.ahk
 ; =============================================================================
 
-APP_VERSION := "2.0.0"
+APP_VERSION := "2.1.0"
+NUMB_CLICK_HINT := "Ctrl+Alt+Click"
 
 ; --- Tunables (raise delays if Ix is slow to focus/select) -------------------
 ClickDelayMs := 40
@@ -85,8 +86,8 @@ UpdateTrayTip()
 OnMessage(0x201, NumbGlobalLDown, 2)
 OnMessage(0x202, NumbGlobalLUp, 2)
 
-; --- Hotkey: Ctrl+Shift+Left click ------------------------------------------
-^+LButton:: {
+; --- Hotkey: Ctrl+Alt+Left click (not used by Windows / AutoCAD / iX for click) ---
+^!LButton:: {
     global busy
     if busy
         return
@@ -111,17 +112,18 @@ StartNumberOp() {
 
     ; =================================================================
     ; LOCKED — imos / Ix / AutoCAD routing (v1.8.5+). Do not change.
-    ; Properties → NumbNumericGrabProperties | else → NumbRunCaseOp only
+    ; Ix numeric grids (Properties, Article Variables) → NumbNumericGrabProperties
+    ; else → NumbRunCaseOp only
     ; =================================================================
     if cadHost {
-        if NumbCadIsPropertiesPaletteContext(targetWin, anchorX, anchorY) {
+        if NumbCadIsIxNumericGridContext(targetWin, anchorX, anchorY) {
             raw := NumbNumericGrabProperties(anchorX, anchorY)
             if (raw = "") {
                 Tip("Click a number field in Properties.")
                 return
             }
             if (IsTextForCase(raw)) {
-                Tip("Highlight the words to change, then Ctrl+Shift+Click on the highlight.")
+                Tip("Highlight the words to change, then " NUMB_CLICK_HINT " on the highlight.")
                 return
             }
             if !NumbRouteGrabbedContent(raw, anchorX, anchorY, false)
@@ -153,7 +155,7 @@ StartNumberOp() {
         return
     }
     if (IsTextForCase(raw)) {
-        Tip("Highlight the words to change, then Ctrl+Shift+Click on the highlight.")
+        Tip("Highlight the words to change, then " NUMB_CLICK_HINT " on the highlight.")
         return
     }
     if !NumbRouteGrabbedContent(raw, anchorX, anchorY, false)
@@ -164,7 +166,7 @@ StartNumberOp() {
 NumbCadIsCaseContext(hwnd, x, y) {
     if !IsCopyClipUnsafeHost(hwnd)
         return false
-    if NumbCadIsPropertiesPaletteContext(hwnd, x, y)
+    if NumbCadIsIxNumericGridContext(hwnd, x, y)
         return false
     if IsCadInPlaceTextEditor(hwnd)
         return true
@@ -179,7 +181,7 @@ NumbCadIsCaseContext(hwnd, x, y) {
 NumbCadMustUseCasePath(hwnd, x, y) {
     if !IsCopyClipUnsafeHost(hwnd)
         return false
-    if NumbCadIsPropertiesPaletteContext(hwnd, x, y)
+    if NumbCadIsIxNumericGridContext(hwnd, x, y)
         return false
     if NumbCadIsCaseContext(hwnd, x, y)
         return true
@@ -220,11 +222,43 @@ NumbCadIsPropertiesPaletteContext(hwnd, x, y) {
     return false
 }
 
+NumbCadTitleIsIxArticleVariables(title) {
+    return RegExMatch(title, "i)Article-?related\s+Variables")
+}
+
+; iX "Article-related Variables" grid — numeric cells only (not MText / case path).
+NumbCadIsIxArticleVariablesContext(hwnd, x, y) {
+    if !IsCopyClipUnsafeHost(hwnd)
+        return false
+    h := NumbHwndAtPoint(x, y)
+    loop 24 {
+        if !h
+            break
+        try {
+            if NumbCadTitleIsIxArticleVariables(WinGetTitle("ahk_id " h))
+                return true
+        } catch {
+        }
+        h := DllCall("GetParent", "Ptr", h, "Ptr")
+    }
+    try {
+        if NumbCadTitleIsIxArticleVariables(WinGetTitle("ahk_id " hwnd))
+            return true
+    } catch {
+    }
+    return false
+}
+
+NumbCadIsIxNumericGridContext(hwnd, x, y) {
+    return NumbCadIsPropertiesPaletteContext(hwnd, x, y)
+        || NumbCadIsIxArticleVariablesContext(hwnd, x, y)
+}
+
 NumbCadSafeForGlobalFieldSelectCopy(hwnd) {
     global fieldClickX, fieldClickY
     if NumbCadIsCaseContext(hwnd, fieldClickX, fieldClickY)
         return false
-    if NumbCadIsPropertiesPaletteContext(hwnd, fieldClickX, fieldClickY)
+    if NumbCadIsIxNumericGridContext(hwnd, fieldClickX, fieldClickY)
         return true
     fh := NumbGetGuiThreadFocusHwnd(hwnd)
     if NumbCadIsMtextOrRichEditHwnd(fh) || NumbIsMultilineEditHwnd(fh)
@@ -236,7 +270,7 @@ NumbCadSafeForGlobalFieldSelectCopy(hwnd) {
 
 NumbCopyFocusedFieldCadLegacy(clipWaitSec) {
     global CopyDelayMs, targetWin, fieldClickX, fieldClickY
-    if !NumbCadIsPropertiesPaletteContext(targetWin, fieldClickX, fieldClickY)
+    if !NumbCadIsIxNumericGridContext(targetWin, fieldClickX, fieldClickY)
         return ""
     clipSaved := ClipboardAll()
     A_Clipboard := ""
@@ -262,7 +296,7 @@ NumbRunCaseOp(anchorX, anchorY, cadHost) {
         Tip("No number or text found: " . Trunc(Trim(raw), 40))
         return
     }
-    Tip("Highlight the words to change, then Ctrl+Shift+Click on the highlight.")
+    Tip("Highlight the words to change, then " NUMB_CLICK_HINT " on the highlight.")
 }
 
 NumbCaseGrabOutside(waitSec) {
@@ -349,7 +383,7 @@ NumbNumericGrabCad(anchorX, anchorY) {
     caseSelectionNeedle := ""
     if NumbCadIsCaseContext(targetWin, anchorX, anchorY)
         return ""
-    if NumbCadIsPropertiesPaletteContext(targetWin, anchorX, anchorY)
+    if NumbCadIsIxNumericGridContext(targetWin, anchorX, anchorY)
         return NumbNumericGrabProperties(anchorX, anchorY)
     probe := WmCopyProbeWaitSec
     if targetWin {
@@ -498,7 +532,7 @@ NumbCadTextSurfaceOnHwndChain(hwnd) {
     return false
 }
 
-; Ctrl+Shift+Click over the MText canvas (not Properties single-line cells).
+; Ctrl+Alt+Click over the MText canvas (not Properties single-line cells).
 NumbCadTextSurfaceAtPoint(x, y) {
     if !IsCopyClipUnsafeHost(WinExist("A"))
         return false
@@ -1652,16 +1686,16 @@ IncrementUseCount() {
 
 UpdateTrayTip() {
     global APP_VERSION, useCount
-    A_IconTip := "NUMB v" APP_VERSION " — Ctrl+Shift+Click a number`nUses: " useCount
+    A_IconTip := "NUMB v" APP_VERSION " — " NUMB_CLICK_HINT " a number`nUses: " useCount
 }
 
 ShowAbout() {
     global APP_VERSION, useCount
     MsgBox(
         "NUMB v" APP_VERSION "`n`n"
-        . "Ctrl+Shift+Click a number, type +56 / *2 / (10+2)/2, or =32+54 (ignore field), Enter.`n"
-        . "Highlight text for case (MText or email), Ctrl+Shift+Click — A/a/Ab/Ab Cd.`n"
-        . "Numbers: Ctrl+Shift+Click a property/number field (Ix/imos/AutoCAD) or any numeric field elsewhere.`n"
+        . NUMB_CLICK_HINT " a number, type +56 / *2 / (10+2)/2, or =32+54 (ignore field), Enter.`n"
+        . "Highlight text for case (MText or email), " NUMB_CLICK_HINT " — A/a/Ab/Ab Cd.`n"
+        . "Numbers: " NUMB_CLICK_HINT " a property/number field (Ix/imos/AutoCAD) or any numeric field elsewhere.`n"
         . "Formulas: =32+54 ignores the current value.`n`n"
         . "Uses so far: " useCount "`n`n"
         . "After Exit: double-click Start NUMB.bat in the install folder`n"

@@ -69,6 +69,20 @@ if ($InstallAutoHotkeySystem) {
     }
 }
 
+if (Test-Path -LiteralPath (Join-Path $Dest 'NUMB.ahk')) {
+    Write-Host 'Updating existing NUMB installation...'
+    Get-Process -Name 'AutoHotkey64' -ErrorAction SilentlyContinue | ForEach-Object {
+        try {
+            if ($_.Path -and ($_.Path -eq (Join-Path $Dest 'AutoHotkey64.exe'))) {
+                Stop-Process -Id $_.Id -Force -ErrorAction Stop
+                Write-Host 'Stopped running NUMB (AutoHotkey64.exe) for update.'
+            }
+        } catch {
+            Write-Warning "Could not stop AutoHotkey64 (PID $($_.Id)): $_"
+        }
+    }
+}
+
 New-Item -ItemType Directory -Force -Path $Dest | Out-Null
 foreach ($f in $files) {
     $from = Join-Path $srcRoot $f

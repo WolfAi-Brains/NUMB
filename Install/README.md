@@ -17,7 +17,9 @@ Bundled **portable AutoHotkey v2.0.31** (`AutoHotkey64.exe` next to `NUMB.ahk`).
    .\Build-Installer.ps1
    ```
 
-4. Ship **`Output\NUMB-Setup-2.0.0.exe`**. Users run it **without** elevating.
+4. Ship **`Output\NUMB-Setup-2.1.0.exe`**. Users run it **without** elevating.
+
+**Upgrades:** Run the new setup EXE on a PC that already has NUMB (same `AppId`). Setup reuses the previous install folder, replaces program files, keeps **`numb.ini`**, closes a running NUMB/AutoHotkey64 briefly if needed, and preserves the logon startup shortcut if you already had one.
 
 The wizard **checks “Start NUMB when Windows starts” by default** (Startup folder shortcut). Uncheck on the tasks page if you do not want logon startup.
 
@@ -56,7 +58,7 @@ Or run `AutoHotkey_2.0.31_setup.exe` yourself, then install NUMB with `-SkipAuto
 
 ## After install
 
-Run **`Start NUMB.bat`** from the install folder (or use the startup task). Tray **NUMB** — **Ctrl+Shift+Click** a numeric field in Ix.
+Run **`Start NUMB.bat`** from the install folder (or use the startup task). Tray **NUMB** — **Ctrl+Alt+Click** a numeric field in Ix.
 
 **Reload** (tray menu) only works while NUMB is running. After **Exit**, run **`Start NUMB.bat`** again, use the **Start menu → NUMB** shortcut, or sign in again if logon startup was enabled.
 

@@ -2,7 +2,7 @@
 
 In-place arithmetic for numeric fields in Windows apps (Ix first — modified AutoCAD).
 
-**Ctrl+Shift+Click** a number → type `+56`, `-45`, `/2`, `*2`, or `(10+2)/2` → **Enter** → the result replaces the field.
+**Ctrl+Alt+Click** a number → type `+56`, `-45`, `/2`, `*2`, or `(10+2)/2` → **Enter** → the result replaces the field.
 
 ## Run from this repo
 
@@ -14,7 +14,7 @@ C:\WolfAi\NUMB\number-ops\NUMB.ahk
 
 ### Installer (other machines)
 
-Use **`Install\Install NUMB.bat`** or **`NUMB-Setup-2.0.0.exe`** — see **`Install\README.md`**. Installs to **`%LocalAppData%\WolfAi\NUMB`** with portable AutoHotkey v2.0.31; **no administrator** required.
+Use **`Install\Install NUMB.bat`** or **`NUMB-Setup-2.1.0.exe`** — see **`Install\README.md`**. Installs to **`%LocalAppData%\WolfAi\NUMB`** with portable AutoHotkey v2.0.31; **no administrator** required.
 
 ### Manual (this repo)
 
@@ -46,7 +46,7 @@ Copy-Item $bat (Join-Path $startup 'Start NUMB.bat')
 
 | Action | Result |
 |--------|--------|
-| `Ctrl+Shift+Click` on `553.25` | Grabs value (clicks field if nothing selected), opens math popup |
+| `Ctrl+Alt+Click` on `553.25` | Grabs value (clicks field if nothing selected), opens math popup |
 | Type `+56` then Enter | Writes `609.25` |
 | Type `-45` | `508.25` |
 | Type `*2` or `/2` | Multiply / divide |
@@ -55,7 +55,7 @@ Copy-Item $bat (Join-Path $startup 'Start NUMB.bat')
 | Type `100` | Replace with bare number |
 | Esc or empty Enter | Cancel, no change |
 
-**Text case:** highlight the text → **Ctrl+Shift+Click** → pick an icon.
+**Text case:** highlight the text → **Ctrl+Alt+Click** → pick an icon.
 
 | Where | Apply |
 |--------|--------|
